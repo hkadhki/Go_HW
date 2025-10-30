@@ -8,7 +8,13 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
+	"time"
 )
+
+type Validatable interface {
+	Validate() error
+}
 
 type Transaction struct {
 	ID          int
@@ -18,10 +24,42 @@ type Transaction struct {
 	Date        string
 }
 
+func (t Transaction) Validate() error {
+	if t.Amount <= 0 {
+		return errors.New("сумма транзакции должна быть положительным числом")
+	}
+	if strings.TrimSpace(t.Category) == "" {
+		return errors.New("категория транзакции не может быть пустой")
+	}
+	if t.Date != "" {
+		if _, err := time.Parse("2006-01-02 15:04:05", t.Date); err != nil {
+			return errors.New("некорректный формат даты")
+		}
+	}
+	return nil
+}
+
 type Budget struct {
 	Category string
 	Limit    float64
 	Period   string
+}
+
+func (b Budget) Validate() error {
+	if strings.TrimSpace(b.Category) == "" {
+		return errors.New("категория бюджета не может быть пустой")
+	}
+	if b.Limit <= 0 {
+		return errors.New("лимит бюджета должен быть положительным числом")
+	}
+	return nil
+}
+
+func CheckValid(v Validatable) error {
+	if err := v.Validate(); err != nil {
+		return fmt.Errorf("валидация не пройдена: %w", err)
+	}
+	return nil
 }
 
 var transactions []Transaction
@@ -30,7 +68,7 @@ var budgets map[string]Budget
 var budgetsAmount map[string]float64
 
 func main() {
-	fmt.Println("Ledger service started")
+	log.Printf("Ledger service started")
 
 	budgets = make(map[string]Budget)
 	budgetsAmount = make(map[string]float64)
@@ -82,8 +120,8 @@ func main() {
 }
 
 func AddTransaction(transaction Transaction) error {
-	if transaction.Amount == 0 {
-		return errors.New("invalid amount")
+	if err := CheckValid(transaction); err != nil {
+		return err
 	}
 
 	budget, exists := budgets[transaction.Category]
@@ -100,7 +138,7 @@ func AddTransaction(transaction Transaction) error {
 	transactions = append(transactions, transaction)
 
 	budgetsAmount[transaction.Category] += transaction.Amount
-	
+
 	fmt.Println(budgets)
 	fmt.Println(budgetsAmount)
 	fmt.Println(transactions)
@@ -115,14 +153,8 @@ func ListTransactions() []Transaction {
 }
 
 func SetBudget(b Budget) error {
-	if b.Category == "" {
-		return errors.New("категория бюджета не может быть пустой")
-	}
-	if b.Limit <= 0 {
-		return errors.New("лимит бюджета должен быть положительным числом")
-	}
-	if b.Period == "" {
-		b.Period = "monthly"
+	if err := CheckValid(b); err != nil {
+		return err
 	}
 
 	budgets[b.Category] = b
