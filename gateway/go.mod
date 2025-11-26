@@ -7,4 +7,4 @@ require (
 	ledger v0.0.0
 )
 
-replace ledger => ../ledger
+replace ledger => ./../ledger
