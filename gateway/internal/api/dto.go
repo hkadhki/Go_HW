@@ -26,3 +26,5 @@ type BudgetResponse struct {
 	Limit    float64 `json:"limit"`
 	Period   string  `json:"period"`
 }
+
+type SpendingSummaryResponse map[string]float64

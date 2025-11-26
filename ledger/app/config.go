@@ -1,4 +1,3 @@
-// app/config.go
 package app
 
 import (

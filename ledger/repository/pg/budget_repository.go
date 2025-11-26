@@ -4,18 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	domain2 "ledger/domain"
+	"ledger/domain"
 )
 
 type budgetRepository struct {
 	db *sql.DB
 }
 
-func NewBudgetRepository(db *sql.DB) domain2.BudgetRepository {
+func NewBudgetRepository(db *sql.DB) domain.BudgetRepository {
 	return &budgetRepository{db: db}
 }
 
-func (r *budgetRepository) Save(ctx context.Context, budget domain2.Budget) error {
+func (r *budgetRepository) Save(ctx context.Context, budget domain.Budget) error {
 	query := `
 		INSERT INTO budgets (category, limit_amount) 
 		VALUES ($1, $2) 
@@ -31,14 +31,14 @@ func (r *budgetRepository) Save(ctx context.Context, budget domain2.Budget) erro
 	return nil
 }
 
-func (r *budgetRepository) GetByCategory(ctx context.Context, category string) (*domain2.Budget, error) {
+func (r *budgetRepository) GetByCategory(ctx context.Context, category string) (*domain.Budget, error) {
 	query := `
 		SELECT category, limit_amount 
 		FROM budgets 
 		WHERE category = $1
 	`
 
-	var budget domain2.Budget
+	var budget domain.Budget
 	err := r.db.QueryRowContext(ctx, query, category).Scan(&budget.Category, &budget.Limit)
 
 	if err == sql.ErrNoRows {
@@ -48,13 +48,12 @@ func (r *budgetRepository) GetByCategory(ctx context.Context, category string) (
 		return nil, fmt.Errorf("failed to get budget by category: %w", err)
 	}
 
-	// Устанавливаем период по умолчанию
 	budget.Period = "monthly"
 
 	return &budget, nil
 }
 
-func (r *budgetRepository) List(ctx context.Context) ([]domain2.Budget, error) {
+func (r *budgetRepository) List(ctx context.Context) ([]domain.Budget, error) {
 	query := `
 		SELECT category, limit_amount 
 		FROM budgets 
@@ -67,15 +66,14 @@ func (r *budgetRepository) List(ctx context.Context) ([]domain2.Budget, error) {
 	}
 	defer rows.Close()
 
-	var budgets []domain2.Budget
+	var budgets []domain.Budget
 	for rows.Next() {
-		var budget domain2.Budget
+		var budget domain.Budget
 		err := rows.Scan(&budget.Category, &budget.Limit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan budget: %w", err)
 		}
 
-		// Устанавливаем период по умолчанию
 		budget.Period = "monthly"
 		budgets = append(budgets, budget)
 	}
