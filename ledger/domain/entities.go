@@ -1,4 +1,4 @@
-package models
+package domain
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ type Transaction struct {
 	Amount      float64
 	Category    string
 	Description string
-	Date        string
+	Date        time.Time
 }
 
 func (t Transaction) Validate() error {
@@ -21,10 +21,8 @@ func (t Transaction) Validate() error {
 	if strings.TrimSpace(t.Category) == "" {
 		return errors.New("категория транзакции не может быть пустой")
 	}
-	if t.Date != "" {
-		if _, err := time.Parse("2006-01-02 15:04:05", t.Date); err != nil {
-			return errors.New("некорректный формат даты")
-		}
+	if t.Date.IsZero() {
+		return errors.New("дата транзакции должна быть указана")
 	}
 	return nil
 }
@@ -32,7 +30,7 @@ func (t Transaction) Validate() error {
 type Budget struct {
 	Category string
 	Limit    float64
-	Period   string
+	Period   string // "monthly", "weekly", "daily"
 }
 
 func (b Budget) Validate() error {
@@ -42,12 +40,8 @@ func (b Budget) Validate() error {
 	if b.Limit <= 0 {
 		return errors.New("лимит бюджета должен быть положительным числом")
 	}
-	return nil
-}
-
-func CheckValid(v Validatable) error {
-	if err := v.Validate(); err != nil {
-		return errors.New("валидация не пройдена")
+	if b.Period != "" && b.Period != "monthly" && b.Period != "weekly" && b.Period != "daily" {
+		return errors.New("период должен быть 'monthly', 'weekly', 'daily' или пустым")
 	}
 	return nil
 }

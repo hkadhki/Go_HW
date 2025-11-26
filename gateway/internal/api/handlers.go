@@ -2,36 +2,20 @@ package api
 
 import (
 	"encoding/json"
-	"ledger/models"
-	"ledger/services"
-	"log"
+	"ledger/domain"
+	"ledger/service"
 	"net/http"
 	"time"
 )
 
 type Handler struct {
-	ledgerService *services.LedgerService
+	ledgerService service.LedgerService
 }
 
-func NewHandler(ledgerService *services.LedgerService) *Handler {
+func NewHandler(ledgerService service.LedgerService) *Handler {
 	return &Handler{
 		ledgerService: ledgerService,
 	}
-}
-
-func JSONMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		next.ServeHTTP(w, r)
-	})
-}
-
-func LoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %v", r.Method, r.URL.Path, time.Since(start))
-	})
 }
 
 func (h *Handler) CreateTransactionHandler(w http.ResponseWriter, r *http.Request) {
@@ -41,45 +25,62 @@ func (h *Handler) CreateTransactionHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	transaction := CreateRequestToTransaction(req)
-
-	if err := models.CheckValid(transaction); err != nil {
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
-		return
+	// Преобразуем в доменный DTO
+	domainReq := domain.CreateTransactionRequest{
+		Amount:      req.Amount,
+		Category:    req.Category,
+		Description: req.Description,
 	}
 
-	id, err := h.ledgerService.AddTransaction(transaction)
-	if err != nil {
-		if err.Error() == "budget exceeded" {
-			http.Error(w, `{"error":"budget exceeded"}`, http.StatusConflict)
-		} else if err.Error() == "budget not found" {
-			http.Error(w, `{"error":"budget not found"}`, http.StatusBadRequest)
-		} else {
-			http.Error(w, `{"error":"Internal error"}`, http.StatusInternalServerError)
+	// Парсим дату, если указана
+	if req.Date != "" {
+		if date, err := time.Parse("2006-01-02 15:04:05", req.Date); err == nil {
+			domainReq.Date = date
+		} else if date, err := time.Parse("2006-01-02", req.Date); err == nil {
+			domainReq.Date = date
 		}
-		return
 	}
 
-	response := TransactionToResponse(transaction)
-	response.ID = id
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	err = json.NewEncoder(w).Encode(response)
+	// Вызываем метод сервиса
+	response, err := h.ledgerService.CreateTransaction(r.Context(), domainReq)
 	if err != nil {
+		h.handleServiceError(w, err)
 		return
 	}
+
+	// Преобразуем ответ обратно в API DTO
+	apiResponse := TransactionResponse{
+		ID:          response.ID,
+		Amount:      response.Amount,
+		Category:    response.Category,
+		Description: response.Description,
+		Date:        response.Date.Format("2006-01-02 15:04:05"),
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(apiResponse)
 }
 
 func (h *Handler) ListTransactions(w http.ResponseWriter, r *http.Request) {
-	transactions := h.ledgerService.ListTransactions()
-	response := TransactionsToResponseList(transactions)
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(response)
+	responses, err := h.ledgerService.ListTransactions(r.Context())
 	if err != nil {
+		http.Error(w, `{"error":"Internal error"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Преобразуем в API DTO
+	apiResponses := make([]TransactionResponse, len(responses))
+	for i, response := range responses {
+		apiResponses[i] = TransactionResponse{
+			ID:          response.ID,
+			Amount:      response.Amount,
+			Category:    response.Category,
+			Description: response.Description,
+			Date:        response.Date.Format("2006-01-02 15:04:05"),
+		}
+	}
+
+	json.NewEncoder(w).Encode(apiResponses)
 }
 
 func (h *Handler) CreateBudget(w http.ResponseWriter, r *http.Request) {
@@ -89,35 +90,76 @@ func (h *Handler) CreateBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	budget := CreateRequestToBudget(req)
+	// Преобразуем в доменный DTO
+	domainReq := domain.CreateBudgetRequest{
+		Category: req.Category,
+		Limit:    req.Limit,
+		Period:   req.Period,
+	}
 
-	if err := budget.Validate(); err != nil {
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+	// Вызываем метод сервиса
+	response, err := h.ledgerService.CreateBudget(r.Context(), domainReq)
+	if err != nil {
+		h.handleServiceError(w, err)
 		return
 	}
 
-	if err := h.ledgerService.SetBudget(budget); err != nil {
+	// Преобразуем ответ обратно в API DTO
+	apiResponse := BudgetResponse{
+		Category: response.Category,
+		Limit:    response.Limit,
+		Period:   response.Period,
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(apiResponse)
+}
+
+func (h *Handler) ListBudgets(w http.ResponseWriter, r *http.Request) {
+	responses, err := h.ledgerService.ListBudgets(r.Context())
+	if err != nil {
 		http.Error(w, `{"error":"Internal error"}`, http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	err := json.NewEncoder(w).Encode(BudgetToResponse(budget))
-	if err != nil {
-		return
+	// Преобразуем в API DTO
+	apiResponses := make([]BudgetResponse, len(responses))
+	for i, response := range responses {
+		apiResponses[i] = BudgetResponse{
+			Category: response.Category,
+			Limit:    response.Limit,
+			Period:   response.Period,
+		}
 	}
-}
 
-func (h *Handler) ListBudgets(w http.ResponseWriter, r *http.Request) {
-	budgets := h.ledgerService.ListBudgets()
-	response := BudgetsToResponseList(budgets)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(apiResponses)
 }
 
 func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "pong"})
+}
+
+func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	if err := h.ledgerService.HealthCheck(r.Context()); err != nil {
+		http.Error(w, `{"error":"service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
+	errorMsg := err.Error()
+
+	switch errorMsg {
+	case "budget not found":
+		http.Error(w, `{"error":"budget not found"}`, http.StatusBadRequest)
+	case "budget exceeded":
+		http.Error(w, `{"error":"budget exceeded"}`, http.StatusConflict)
+	case "validation failed: amount must be positive",
+		"validation failed: category is required":
+		http.Error(w, `{"error":"`+errorMsg+`"}`, http.StatusBadRequest)
+	default:
+		http.Error(w, `{"error":"Internal error"}`, http.StatusInternalServerError)
+	}
 }
