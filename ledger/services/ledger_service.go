@@ -1,102 +1,126 @@
 package services
 
 import (
-	"bufio"
-	"encoding/json"
+	"database/sql"
 	"errors"
-	"io"
+	"fmt"
+	"ledger/db"
 	"ledger/models"
 	"time"
 )
 
 type LedgerService struct {
-	transactions  []models.Transaction
-	Budgets       map[string]models.Budget
-	BudgetsAmount map[string]float64
-	id            int
+	db *sql.DB
 }
 
 func NewLedgerService() *LedgerService {
 	return &LedgerService{
-		transactions:  make([]models.Transaction, 0),
-		Budgets:       make(map[string]models.Budget),
-		BudgetsAmount: make(map[string]float64),
-		id:            0,
+		db: db.DB,
 	}
 }
 
 func (ls *LedgerService) AddTransaction(transaction models.Transaction) (int, error) {
-	if err := models.CheckValid(transaction); err != nil {
+	if err := transaction.Validate(); err != nil {
 		return 0, err
 	}
 
-	budget, exists := ls.Budgets[transaction.Category]
-	if exists {
-		if ls.BudgetsAmount[transaction.Category]+transaction.Amount > budget.Limit {
-			return 0, errors.New("budget exceeded")
+	// Check if budget exists and validate limit
+	var limit float64
+	err := ls.db.QueryRow("SELECT limit_amount FROM budgets WHERE category = $1", transaction.Category).Scan(&limit)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, errors.New("budget not found")
 		}
-	} else {
-		return 0, errors.New("budget not found")
+		return 0, fmt.Errorf("database error: %v", err)
 	}
 
+	// Calculate spent amount
+	var spent float64
+	err = ls.db.QueryRow("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE category = $1", transaction.Category).Scan(&spent)
+	if err != nil {
+		return 0, fmt.Errorf("database error: %v", err)
+	}
+
+	// Check budget
+	if spent+transaction.Amount > limit {
+		return 0, errors.New("budget exceeded")
+	}
+
+	// Set date if empty
 	if transaction.Date == "" {
 		transaction.Date = time.Now().Format("2006-01-02 15:04:05")
 	}
 
-	transaction.ID = ls.id
-	ls.id++
+	// Insert transaction
+	var id int
+	err = ls.db.QueryRow(
+		"INSERT INTO expenses (amount, category, description, date) VALUES ($1, $2, $3, $4) RETURNING id",
+		transaction.Amount, transaction.Category, transaction.Description, transaction.Date,
+	).Scan(&id)
 
-	ls.transactions = append(ls.transactions, transaction)
-
-	if exists {
-		ls.BudgetsAmount[transaction.Category] += transaction.Amount
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert transaction: %v", err)
 	}
 
-	return transaction.ID, nil
+	return id, nil
 }
 
-func (ls *LedgerService) ListTransactions() []models.Transaction {
-	result := make([]models.Transaction, len(ls.transactions))
-	copy(result, ls.transactions)
-	return result
+func (ls *LedgerService) ListTransactions() ([]models.Transaction, error) {
+	rows, err := ls.db.Query("SELECT id, amount, category, description, date FROM expenses ORDER BY date DESC, id DESC")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query transactions: %v", err)
+	}
+	defer rows.Close()
+
+	var transactions []models.Transaction
+	for rows.Next() {
+		var tx models.Transaction
+		err := rows.Scan(&tx.ID, &tx.Amount, &tx.Category, &tx.Description, &tx.Date)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan transaction: %v", err)
+		}
+		transactions = append(transactions, tx)
+	}
+
+	return transactions, nil
 }
 
-func (ls *LedgerService) SetBudget(b models.Budget) error {
-	if err := models.CheckValid(b); err != nil {
+func (ls *LedgerService) SetBudget(budget models.Budget) error {
+	if err := budget.Validate(); err != nil {
 		return err
 	}
 
-	ls.Budgets[b.Category] = b
+	_, err := ls.db.Exec(
+		"INSERT INTO budgets (category, limit_amount) VALUES ($1, $2) ON CONFLICT (category) DO UPDATE SET limit_amount = EXCLUDED.limit_amount",
+		budget.Category, budget.Limit,
+	)
 
-	return nil
-}
-
-func (ls *LedgerService) LoadBudgets(r io.Reader) error {
-	reader := bufio.NewReader(r)
-
-	data, err := io.ReadAll(reader)
 	if err != nil {
-		return errors.New("ошибка чтения")
-	}
-
-	var budgetList []models.Budget
-	if err := json.Unmarshal(data, &budgetList); err != nil {
-		return errors.New("ошибка парсинга в json")
-	}
-
-	for _, budget := range budgetList {
-		if err := ls.SetBudget(budget); err != nil {
-			return errors.New("ошибка сохранения бюджета")
-		}
+		return fmt.Errorf("failed to set budget: %v", err)
 	}
 
 	return nil
 }
 
-func (ls *LedgerService) ListBudgets() []models.Budget {
-	result := make([]models.Budget, 0, len(ls.Budgets))
-	for _, budget := range ls.Budgets {
-		result = append(result, budget)
+func (ls *LedgerService) ListBudgets() ([]models.Budget, error) {
+	rows, err := ls.db.Query("SELECT category, limit_amount FROM budgets ORDER BY category")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query budgets: %v", err)
 	}
-	return result
+	defer rows.Close()
+
+	var budgets []models.Budget
+	for rows.Next() {
+		var budget models.Budget
+		err := rows.Scan(&budget.Category, &budget.Limit)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan budget: %v", err)
+		}
+		budgets = append(budgets, budget)
+	}
+
+	return budgets, nil
+}
+
+func (ls *LedgerService) Reset() {
 }

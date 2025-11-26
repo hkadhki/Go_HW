@@ -1,59 +1,87 @@
 package main
 
 import (
+	"ledger/db"
 	"ledger/models"
 	"ledger/services"
 	"log"
-	"os"
 )
 
 func main() {
-	log.Printf("Ledger service started")
+	// Initialize database
+	if err := db.Init(); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	log.Println("Ledger service started with PostgreSQL storage")
 
 	ledgerService := services.NewLedgerService()
 
-	//initialBudgets := []Budget{
-	//	{Category: "Продукты", Limit: 5000, Period: "2024-01"},
-	//	{Category: "Транспорт", Limit: 2000, Period: "2024-01"},
-	//	{Category: "Развлечения", Limit: 3000, Period: "2024-01"},
-	//}
-	//
-	//for _, budget := range initialBudgets {
-	//	if err := SetBudget(budget); err != nil {
-	//		log.Printf("Ошибка установки бюджета: %v", err)
-	//	}
-	//}
+	// Set initial budgets
+	initialBudgets := []models.Budget{
+		{Category: "Продукты", Limit: 5000, Period: "monthly"},
+		{Category: "Транспорт", Limit: 2000, Period: "monthly"},
+		{Category: "Развлечения", Limit: 3000, Period: "monthly"},
+	}
 
-	file, err := os.Open("budgets.json")
-	if err != nil {
-		log.Printf("Ошибка открытия файла бюджетов: %v", err)
-	} else {
-		defer file.Close()
-
-		if err := ledgerService.LoadBudgets(file); err != nil {
-			log.Printf("Ошибка загрузки бюджетов: %v", err)
+	for _, budget := range initialBudgets {
+		if err := ledgerService.SetBudget(budget); err != nil {
+			log.Printf("Ошибка установки бюджета для категории %s: %v", budget.Category, err)
+		} else {
+			log.Printf("Бюджет установлен для категории: %s", budget.Category)
 		}
 	}
 
-	// успешный тест
-	_, err = ledgerService.AddTransaction(models.Transaction{
-		Amount:      1,
+	// Add test transaction within budget
+	_, err := ledgerService.AddTransaction(models.Transaction{
+		Amount:      1000,
 		Category:    "Продукты",
-		Description: "aaa",
-		Date:        "2022-02-22 10:00:00",
+		Description: "Покупки в супермаркете",
+		Date:        "2024-01-15 10:00:00",
 	})
 	if err != nil {
 		log.Printf("Ошибка добавления транзакции: %v", err)
+	} else {
+		log.Println("Транзакция успешно добавлена")
 	}
 
-	// ожидается ошибка
+	// This should fail - exceeds budget
 	_, err = ledgerService.AddTransaction(models.Transaction{
-		Amount:      1000000,
+		Amount:      3000,
 		Category:    "Транспорт",
-		Description: "aaa",
-		Date:        "2022-02-22 10:00:00",
+		Description: "Такси",
+		Date:        "2024-01-15 11:00:00",
 	})
 	if err != nil {
-		log.Printf("Ошибка добавления транзакции: %v", err)
+		log.Printf("Ожидаемая ошибка (превышение бюджета): %v", err)
+	} else {
+		log.Println("Транзакция добавлена (не должно было произойти)")
 	}
+
+	// List transactions to verify
+	transactions, err := ledgerService.ListTransactions()
+	if err != nil {
+		log.Printf("Ошибка получения списка транзакций: %v", err)
+	} else {
+		log.Printf("Всего транзакций: %d", len(transactions))
+		for _, tx := range transactions {
+			log.Printf("Транзакция: %+v", tx)
+		}
+	}
+
+	// List budgets to verify
+	budgets, err := ledgerService.ListBudgets()
+	if err != nil {
+		log.Printf("Ошибка получения списка бюджетов: %v", err)
+	} else {
+		log.Printf("Всего бюджетов: %d", len(budgets))
+		for _, budget := range budgets {
+			log.Printf("Бюджет: %+v", budget)
+		}
+	}
+
+	log.Println("Ledger service is running...")
+
+	// Keep the service running
+	select {}
 }
