@@ -2,6 +2,23 @@ package domain
 
 import "time"
 
+type BulkTransactionRequest struct {
+	Transactions []CreateTransactionRequest `json:"transactions"`
+}
+
+type BulkTransactionResult struct {
+	Index int    `json:"index"`
+	ID    int    `json:"id,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+type BulkTransactionResponse struct {
+	Total    int                     `json:"total"`
+	Accepted int                     `json:"accepted"`
+	Rejected int                     `json:"rejected"`
+	Errors   []BulkTransactionResult `json:"errors"`
+}
+
 type CreateTransactionRequest struct {
 	Amount      float64   `json:"amount"`
 	Category    string    `json:"category"`

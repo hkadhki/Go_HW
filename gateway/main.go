@@ -51,6 +51,7 @@ func setupRouter(handler *api.Handler) *mux.Router {
 	apiRouter.HandleFunc("/health", handler.HealthCheck).Methods("GET")
 	apiRouter.HandleFunc("/timeout-test", handler.TimeoutTest).Methods("GET")
 	apiRouter.HandleFunc("/reports/summary", handler.GetSpendingSummary).Methods("GET")
+	apiRouter.HandleFunc("/transactions/bulk", handler.CreateTransactionsBulk).Methods("POST")
 
 	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

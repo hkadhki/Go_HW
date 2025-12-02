@@ -6,6 +6,7 @@ import (
 	"ledger/domain"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -319,4 +320,108 @@ func (s *ledgerService) calculateCategorySpending(ctx context.Context, category 
 	}
 
 	return total, nil
+}
+
+func (s *ledgerService) CreateTransactionsBulk(ctx context.Context, req domain.BulkTransactionRequest, workers int) (*domain.BulkTransactionResponse, error) {
+	total := len(req.Transactions)
+	if total == 0 {
+		return &domain.BulkTransactionResponse{
+			Total:    0,
+			Accepted: 0,
+			Rejected: 0,
+			Errors:   []domain.BulkTransactionResult{},
+		}, nil
+	}
+
+	log.Printf("Processing %d transactions with %d concurrent workers", total, workers)
+
+	results := make(chan bulkResult, total)
+
+	var accepted atomic.Int64
+	var rejected atomic.Int64
+
+	var wg sync.WaitGroup
+	chunkSize := (total + workers - 1) / workers
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+
+		go func(workerID, startIdx int) {
+			defer wg.Done()
+
+			endIdx := startIdx + chunkSize
+			if endIdx > total {
+				endIdx = total
+			}
+
+			for i := startIdx; i < endIdx; i++ {
+				select {
+				case <-ctx.Done():
+					results <- bulkResult{
+						Index: i,
+						Error: ctx.Err(),
+					}
+					return
+				default:
+				}
+
+				tx, err := s.CreateTransaction(ctx, req.Transactions[i])
+				if err != nil {
+					rejected.Add(1)
+					results <- bulkResult{
+						Index: i,
+						Error: err,
+					}
+				} else {
+					accepted.Add(1)
+					results <- bulkResult{
+						Index: i,
+						ID:    tx.ID,
+					}
+				}
+			}
+		}(w, w*chunkSize)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	errors := make([]domain.BulkTransactionResult, 0, total)
+
+	for result := range results {
+		if result.Error != nil {
+			errors = append(errors, domain.BulkTransactionResult{
+				Index: result.Index,
+				Error: result.Error.Error(),
+			})
+		}
+	}
+
+	if ctx.Err() != nil {
+		log.Printf("Bulk import cancelled: %v", ctx.Err())
+		return &domain.BulkTransactionResponse{
+			Total:    total,
+			Accepted: int(accepted.Load()),
+			Rejected: int(rejected.Load()),
+			Errors:   errors,
+		}, ctx.Err()
+	}
+
+	log.Printf("Bulk import finished: %d accepted, %d rejected",
+		accepted.Load(), rejected.Load())
+
+	return &domain.BulkTransactionResponse{
+		Total:    total,
+		Accepted: int(accepted.Load()),
+		Rejected: int(rejected.Load()),
+		Errors:   errors,
+	}, nil
+}
+
+type bulkResult struct {
+	Index int
+	ID    int
+	Error error
 }

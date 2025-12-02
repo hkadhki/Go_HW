@@ -12,4 +12,5 @@ type LedgerService interface {
 	ListBudgets(ctx context.Context) ([]domain.BudgetResponse, error)
 	HealthCheck(ctx context.Context) error
 	GetSpendingSummary(ctx context.Context, req domain.GetSpendingSummaryRequest) (domain.SpendingSummary, error)
+	CreateTransactionsBulk(ctx context.Context, req domain.BulkTransactionRequest, workers int) (*domain.BulkTransactionResponse, error)
 }

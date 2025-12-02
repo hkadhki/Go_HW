@@ -2,12 +2,11 @@ package main
 
 import (
 	"ledger/models"
-	"ledger/services"
 	"testing"
 )
 
 // Test helper function to reset service state
-func Reset(service *services.LedgerService) {
+func Reset(service *LedgerService) {
 	// Since fields are private, we need to create a new service
 	// In real implementation, you might want to add Reset method to LedgerService
 }

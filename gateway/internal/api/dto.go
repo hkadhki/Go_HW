@@ -28,3 +28,16 @@ type BudgetResponse struct {
 }
 
 type SpendingSummaryResponse map[string]float64
+
+type BulkTransactionResponse struct {
+	Total    int                     `json:"total"`
+	Accepted int                     `json:"accepted"`
+	Rejected int                     `json:"rejected"`
+	Errors   []BulkTransactionResult `json:"errors"`
+}
+
+type BulkTransactionResult struct {
+	Index int    `json:"index"`
+	ID    int    `json:"id,omitempty"`
+	Error string `json:"error,omitempty"`
+}

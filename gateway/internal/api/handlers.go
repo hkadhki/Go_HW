@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"ledger/domain"
 	"ledger/service"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -244,5 +246,101 @@ func (h *Handler) handleReportServiceError(w http.ResponseWriter, err error) {
 		http.Error(w, `{"error":"`+errorMsg+`"}`, http.StatusBadRequest)
 	default:
 		http.Error(w, `{"error":"Internal error"}`, http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) CreateTransactionsBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Err() != nil {
+		h.handleTimeoutError(w, r.Context().Err())
+		return
+	}
+
+	workers := 4
+	if workersStr := r.URL.Query().Get("workers"); workersStr != "" {
+		if w, err := strconv.Atoi(workersStr); err == nil && w > 0 {
+			workers = w
+		}
+	}
+
+	var req struct {
+		Transactions []CreateTransactionRequest `json:"transactions"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Transactions) > 1000 {
+		http.Error(w, `{"error":"Maximum 1000 transactions per request"}`, http.StatusBadRequest)
+		return
+	}
+
+	bulkReq := domain.BulkTransactionRequest{
+		Transactions: make([]domain.CreateTransactionRequest, len(req.Transactions)),
+	}
+
+	for i, tx := range req.Transactions {
+		domainReq := domain.CreateTransactionRequest{
+			Amount:      tx.Amount,
+			Category:    tx.Category,
+			Description: tx.Description,
+		}
+
+		if tx.Date != "" {
+			if date, err := time.Parse("2006-01-02 15:04:05", tx.Date); err == nil {
+				domainReq.Date = date
+			} else if date, err := time.Parse("2006-01-02", tx.Date); err == nil {
+				domainReq.Date = date
+			}
+		}
+
+		bulkReq.Transactions[i] = domainReq
+	}
+
+	response, err := h.ledgerService.CreateTransactionsBulk(r.Context(), bulkReq, workers)
+
+	if err != nil {
+		if err == context.DeadlineExceeded {
+			h.handleTimeoutError(w, err)
+		} else {
+			http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	apiResponse := BulkTransactionResponse{
+		Total:    response.Total,
+		Accepted: response.Accepted,
+		Rejected: response.Rejected,
+		Errors:   make([]BulkTransactionResult, len(response.Errors)),
+	}
+
+	for i, err := range response.Errors {
+		apiResponse.Errors[i] = BulkTransactionResult{
+			Index: err.Index,
+			Error: err.Error,
+		}
+	}
+
+	json.NewEncoder(w).Encode(apiResponse)
+}
+
+func (h *Handler) handleTimeoutError(w http.ResponseWriter, err error) {
+	if err == context.DeadlineExceeded {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Request timeout",
+		})
+	} else if err == context.Canceled {
+		w.Header().Set("Content-Type", "/json")
+		w.WriteHeader(499) // Client Closed Request
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Client closed request",
+		})
 	}
 }
